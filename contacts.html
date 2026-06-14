@@ -1,0 +1,293 @@
+<!-- contacts.html - Менеджер контактов на JavaScript (IndexedDB) -->
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>📇 Контакты · Менеджер</title>
+    <style>
+        * { box-sizing: border-box; font-family: system-ui, 'Segoe UI', sans-serif; }
+        body { background: #f4f7fa; margin: 0; padding: 20px; }
+        .container { max-width: 1400px; margin: 0 auto; background: white; border-radius: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); overflow: hidden; }
+        .header { background: #2c3e50; color: white; padding: 20px 30px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px; }
+        .header h1 { margin: 0; font-size: 24px; }
+        .search-box input { padding: 8px 15px; border-radius: 30px; border: none; width: 250px; }
+        .filter select { padding: 8px 15px; border-radius: 30px; border: none; }
+        .btn { background: #3498db; color: white; border: none; padding: 8px 20px; border-radius: 30px; cursor: pointer; transition: 0.1s; }
+        .btn:hover { background: #2980b9; }
+        .btn-danger { background: #e74c3c; }
+        .btn-danger:hover { background: #c0392b; }
+        .main { display: flex; min-height: 70vh; }
+        .sidebar { width: 40%; border-right: 1px solid #ddd; padding: 20px; overflow-y: auto; max-height: 70vh; }
+        .contact-item { padding: 12px; border-bottom: 1px solid #eee; cursor: pointer; transition: 0.1s; display: flex; align-items: center; gap: 12px; }
+        .contact-item:hover { background: #f0f0f0; }
+        .contact-item.active { background: #e3f2fd; border-left: 4px solid #3498db; }
+        .avatar { width: 48px; height: 48px; background: #3498db; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 20px; }
+        .contact-info h3 { margin: 0; font-size: 16px; }
+        .contact-info p { margin: 4px 0 0; font-size: 12px; color: #666; }
+        .details { flex: 1; padding: 20px; background: #fafafa; }
+        .detail-field { margin-bottom: 12px; display: flex; }
+        .detail-field label { width: 100px; font-weight: bold; }
+        .detail-field div { flex: 1; }
+        .photo-preview { width: 100px; height: 100px; background: #ddd; border-radius: 50%; margin-bottom: 15px; background-size: cover; background-position: center; }
+        .form-row { margin-bottom: 12px; }
+        .form-row label { display: inline-block; width: 100px; }
+        .form-row input, .form-row select, .form-row textarea { width: 300px; padding: 6px; border-radius: 8px; border: 1px solid #ccc; }
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); justify-content: center; align-items: center; z-index: 1000; }
+        .modal-content { background: white; padding: 30px; border-radius: 20px; width: 500px; max-width: 90%; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="header">
+        <h1>📇 Менеджер контактов</h1>
+        <div class="search-box"><input type="text" id="searchInput" placeholder="Поиск..."></div>
+        <div class="filter">
+            <select id="groupFilter">
+                <option value="all">Все группы</option>
+                <option value="Family">Семья</option>
+                <option value="Work">Работа</option>
+                <option value="Friends">Друзья</option>
+                <option value="Other">Другое</option>
+            </select>
+        </div>
+        <button class="btn" id="addBtn">➕ Добавить контакт</button>
+        <button class="btn" id="exportCsvBtn">📎 Экспорт CSV</button>
+        <input type="file" id="importCsvInput" accept=".csv" style="display:none">
+        <button class="btn" id="importCsvBtn">📂 Импорт CSV</button>
+    </div>
+    <div class="main">
+        <div class="sidebar" id="contactList"></div>
+        <div class="details" id="contactDetails">
+            <p style="color:#999;">Выберите контакт из списка</p>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно -->
+<div id="contactModal" class="modal">
+    <div class="modal-content">
+        <h2 id="modalTitle">Новый контакт</h2>
+        <div class="form-row"><label>Имя *</label><input type="text" id="firstName" required></div>
+        <div class="form-row"><label>Фамилия</label><input type="text" id="lastName"></div>
+        <div class="form-row"><label>Телефон</label><input type="tel" id="phone"></div>
+        <div class="form-row"><label>Email</label><input type="email" id="email"></div>
+        <div class="form-row"><label>Адрес</label><input type="text" id="address"></div>
+        <div class="form-row"><label>Группа</label>
+            <select id="group">
+                <option value="Family">Семья</option>
+                <option value="Work">Работа</option>
+                <option value="Friends">Друзья</option>
+                <option value="Other">Другое</option>
+            </select>
+        </div>
+        <div class="form-row"><label>Заметки</label><textarea id="notes" rows="3"></textarea></div>
+        <div class="form-row"><label>Фото URL</label><input type="text" id="photoUrl" placeholder="https://..."></div>
+        <div style="margin-top:20px; text-align:right">
+            <button class="btn" id="modalSaveBtn">Сохранить</button>
+            <button class="btn btn-danger" id="modalCancelBtn">Отмена</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    let db = null;
+    let currentContactId = null;
+
+    // Инициализация IndexedDB
+    const request = indexedDB.open("ContactDB", 1);
+    request.onupgradeneeded = (event) => {
+        const db = event.target.result;
+        if (!db.objectStoreNames.contains("contacts")) {
+            const store = db.createObjectStore("contacts", { keyPath: "id", autoIncrement: true });
+            store.createIndex("firstName", "firstName");
+            store.createIndex("group", "group");
+        }
+    };
+    request.onsuccess = (event) => {
+        db = event.target.result;
+        loadContactsAndRender();
+    };
+    request.onerror = (event) => console.error("IndexedDB error", event);
+
+    async function loadContactsAndRender() {
+        const transaction = db.transaction(["contacts"], "readonly");
+        const store = transaction.objectStore("contacts");
+        const contacts = await new Promise((resolve) => {
+            const request = store.getAll();
+            request.onsuccess = () => resolve(request.result);
+        });
+        renderContactList(contacts);
+    }
+
+    function renderContactList(contacts) {
+        const searchTerm = document.getElementById("searchInput").value.toLowerCase();
+        const groupFilter = document.getElementById("groupFilter").value;
+        let filtered = contacts;
+        if (groupFilter !== "all") filtered = filtered.filter(c => c.group === groupFilter);
+        if (searchTerm) filtered = filtered.filter(c => 
+            (c.firstName + " " + c.lastName).toLowerCase().includes(searchTerm) ||
+            (c.phone || "").includes(searchTerm) ||
+            (c.email || "").toLowerCase().includes(searchTerm)
+        );
+        const container = document.getElementById("contactList");
+        container.innerHTML = "";
+        filtered.forEach(contact => {
+            const div = document.createElement("div");
+            div.className = "contact-item";
+            if (currentContactId === contact.id) div.classList.add("active");
+            const initials = (contact.firstName[0] || "") + (contact.lastName[0] || "");
+            const avatar = document.createElement("div");
+            avatar.className = "avatar";
+            avatar.textContent = initials || "?";
+            const info = document.createElement("div");
+            info.className = "contact-info";
+            info.innerHTML = `<h3>${contact.firstName} ${contact.lastName}</h3><p>${contact.phone || "—"}</p>`;
+            div.appendChild(avatar);
+            div.appendChild(info);
+            div.onclick = () => showContactDetails(contact.id);
+            container.appendChild(div);
+        });
+        if (filtered.length === 0) container.innerHTML = "<p style='padding:20px;text-align:center'>Контакты не найдены</p>";
+    }
+
+    async function showContactDetails(id) {
+        const transaction = db.transaction(["contacts"], "readonly");
+        const contact = await new Promise((resolve) => {
+            const req = transaction.objectStore("contacts").get(id);
+            req.onsuccess = () => resolve(req.result);
+        });
+        if (!contact) return;
+        currentContactId = id;
+        const detailsDiv = document.getElementById("contactDetails");
+        const photoHtml = contact.photoUrl ? `<div class="photo-preview" style="background-image:url('${contact.photoUrl}')"></div>` : `<div class="photo-preview" style="background:#ccc; display:flex;align-items:center;justify-content:center">Нет фото</div>`;
+        detailsDiv.innerHTML = `
+            ${photoHtml}
+            <div class="detail-field"><label>Имя:</label><div>${contact.firstName} ${contact.lastName}</div></div>
+            <div class="detail-field"><label>Телефон:</label><div>${contact.phone || "—"}</div></div>
+            <div class="detail-field"><label>Email:</label><div>${contact.email || "—"}</div></div>
+            <div class="detail-field"><label>Адрес:</label><div>${contact.address || "—"}</div></div>
+            <div class="detail-field"><label>Группа:</label><div>${contact.group || "—"}</div></div>
+            <div class="detail-field"><label>Заметки:</label><div>${contact.notes || "—"}</div></div>
+            <div style="margin-top:20px">
+                <button class="btn" id="editBtn">✏️ Редактировать</button>
+                <button class="btn btn-danger" id="deleteBtn">🗑 Удалить</button>
+            </div>
+        `;
+        document.getElementById("editBtn").onclick = () => openModal(contact);
+        document.getElementById("deleteBtn").onclick = async () => {
+            if (confirm("Удалить контакт?")) {
+                const tx = db.transaction(["contacts"], "readwrite");
+                tx.objectStore("contacts").delete(contact.id);
+                await tx.complete;
+                currentContactId = null;
+                loadContactsAndRender();
+                document.getElementById("contactDetails").innerHTML = "<p style='color:#999;'>Выберите контакт из списка</p>";
+            }
+        };
+        // Подсветка в списке
+        document.querySelectorAll(".contact-item").forEach(el => el.classList.remove("active"));
+        const activeItem = Array.from(document.querySelectorAll(".contact-item")).find(el => el.textContent.includes(contact.firstName));
+        if (activeItem) activeItem.classList.add("active");
+    }
+
+    function openModal(contact = null) {
+        const modal = document.getElementById("contactModal");
+        document.getElementById("modalTitle").innerText = contact ? "Редактировать контакт" : "Новый контакт";
+        document.getElementById("firstName").value = contact ? contact.firstName : "";
+        document.getElementById("lastName").value = contact ? contact.lastName : "";
+        document.getElementById("phone").value = contact ? contact.phone : "";
+        document.getElementById("email").value = contact ? contact.email : "";
+        document.getElementById("address").value = contact ? contact.address : "";
+        document.getElementById("group").value = contact ? contact.group : "Family";
+        document.getElementById("notes").value = contact ? contact.notes : "";
+        document.getElementById("photoUrl").value = contact ? contact.photoUrl : "";
+        modal.style.display = "flex";
+        const saveBtn = document.getElementById("modalSaveBtn");
+        const cancelBtn = document.getElementById("modalCancelBtn");
+        const saveHandler = async () => {
+            const newContact = {
+                firstName: document.getElementById("firstName").value.trim(),
+                lastName: document.getElementById("lastName").value.trim(),
+                phone: document.getElementById("phone").value.trim(),
+                email: document.getElementById("email").value.trim(),
+                address: document.getElementById("address").value.trim(),
+                group: document.getElementById("group").value,
+                notes: document.getElementById("notes").value.trim(),
+                photoUrl: document.getElementById("photoUrl").value.trim()
+            };
+            if (!newContact.firstName) { alert("Имя обязательно"); return; }
+            const tx = db.transaction(["contacts"], "readwrite");
+            const store = tx.objectStore("contacts");
+            if (contact && contact.id) {
+                newContact.id = contact.id;
+                store.put(newContact);
+            } else {
+                store.add(newContact);
+            }
+            await tx.complete;
+            modal.style.display = "none";
+            loadContactsAndRender();
+            if (contact && contact.id) showContactDetails(contact.id);
+            else document.getElementById("contactDetails").innerHTML = "<p style='color:#999;'>Контакт добавлен</p>";
+        };
+        saveBtn.onclick = saveHandler;
+        cancelBtn.onclick = () => { modal.style.display = "none"; };
+        // Убираем старые слушатели, но проще переопределить
+    }
+
+    // Экспорт CSV
+    document.getElementById("exportCsvBtn").onclick = async () => {
+        const tx = db.transaction(["contacts"], "readonly");
+        const contacts = await new Promise(resolve => {
+            const req = tx.objectStore("contacts").getAll();
+            req.onsuccess = () => resolve(req.result);
+        });
+        let csv = "id,firstName,lastName,phone,email,address,group,notes,photoUrl\n";
+        contacts.forEach(c => {
+            csv += `"${c.id}","${c.firstName}","${c.lastName || ''}","${c.phone || ''}","${c.email || ''}","${c.address || ''}","${c.group || ''}","${(c.notes || '').replace(/"/g, '""')}","${c.photoUrl || ''}"\n`;
+        });
+        const blob = new Blob([csv], {type: "text/csv"});
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = "contacts.csv";
+        a.click();
+        URL.revokeObjectURL(a.href);
+    };
+    // Импорт CSV
+    document.getElementById("importCsvBtn").onclick = () => document.getElementById("importCsvInput").click();
+    document.getElementById("importCsvInput").onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const text = await file.text();
+        const lines = text.split("\n").slice(1);
+        const tx = db.transaction(["contacts"], "readwrite");
+        const store = tx.objectStore("contacts");
+        for (let line of lines) {
+            if (!line.trim()) continue;
+            const parts = line.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g);
+            if (parts && parts.length >= 9) {
+                const contact = {
+                    id: undefined, // пусть автоинкремент
+                    firstName: parts[1].replace(/^"|"$/g, ''),
+                    lastName: parts[2].replace(/^"|"$/g, ''),
+                    phone: parts[3].replace(/^"|"$/g, ''),
+                    email: parts[4].replace(/^"|"$/g, ''),
+                    address: parts[5].replace(/^"|"$/g, ''),
+                    group: parts[6].replace(/^"|"$/g, ''),
+                    notes: parts[7].replace(/^"|"$/g, '').replace(/""/g, '"'),
+                    photoUrl: parts[8].replace(/^"|"$/g, '')
+                };
+                if (contact.firstName) store.add(contact);
+            }
+        }
+        await tx.complete;
+        loadContactsAndRender();
+        alert("Импорт завершён");
+    };
+    document.getElementById("addBtn").onclick = () => openModal();
+    document.getElementById("searchInput").oninput = () => loadContactsAndRender();
+    document.getElementById("groupFilter").onchange = () => loadContactsAndRender();
+</script>
+</body>
+</html>
